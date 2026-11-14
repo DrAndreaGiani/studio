@@ -271,7 +271,7 @@ async function caricaTutto(){
     /* pazienti: solo l'elenco dei file (nome file = cognome_nome_id.json); il contenuto si scarica quando serve.
        Ciò che è già in memoria e non è cambiato su OneDrive non viene riscaricato. */
     const vecchi=new Map(PAZ.map(p=>[p.id,p])),G=new Map();
-    for(const x of fp){if(!/\.json$/i.test(x.name))continue;const st=stubDa(x.name);if(!st)continue;
+    for(const x of fp){if(!/\.json$/i.test(x.name)||x.size===0)continue; /* file vuoti (0 byte): ignorati */const st=stubDa(x.name);if(!st)continue;
       const g=G.get(st.id)||{...st,items:[]};g.items.push({id:x.id,mod:x.lastModifiedDateTime||''});G.set(st.id,g)}
     PAZ=[...G.values()].map(g=>{g.firma=g.items.map(i=>i.id+'@'+i.mod).sort().join('|');g.fmod=g.items.reduce((a,i)=>i.mod>a?i.mod:a,'');
       const o=vecchi.get(g.id);if(o&&o.caricato&&o.firma===g.firma)return o;
@@ -318,14 +318,15 @@ function caricaTuttiPaz(){if(TUTTI)return Promise.resolve();
 let VISTA='paz',SEL=null,Q='';
 let statoTxt='',statoErr=false;
 function stato(t,err){statoTxt=t;statoErr=!!err;const s=document.querySelector('.st');if(s){s.textContent=t||info();s.className='st'+(err?' err':'')}}
-const info=()=>CARICATO?PAZ.length+' pazienti · aggiornato alle '+CARICATO_ORA.toLocaleTimeString('it',{hour:'2-digit',minute:'2-digit'}):'';
+const VERSIONE='14/11 18:05';
+const info=()=>CARICATO?'App del '+VERSIONE+' · '+PAZ.length+' pazienti · aggiornato alle '+CARICATO_ORA.toLocaleTimeString('it',{hour:'2-digit',minute:'2-digit'}):'';
 function render(){
   $('tp').classList.toggle('on',VISTA==='paz');$('tc').classList.toggle('on',VISTA==='chir'||VISTA==='prat');
   const st=`<div class="st${statoErr?' err':''}">${esc(statoTxt||info())}</div>`;
   if(VISTA==='prat'&&CUR){$('main').innerHTML=vistaPratica();bindPratica();return}
   if(VISTA==='prat')VISTA='chir';
   if(VISTA==='chir'){$('main').innerHTML=st+vistaChir();bindChir();return}
-  if(SEL){const p=PAZ.find(x=>x.id===SEL);if(p&&!p.caricato){$('main').innerHTML='<div class="vuoto">Apertura di '+esc(p.cognome+' '+p.nome)+'…</div>';caricaPaz(p).then(()=>{if(SEL===p.id)render()}).catch(e=>{stato('Paziente non aperto: '+(e.message||e),true);SEL=null;render()});return}
+  if(SEL){const p=PAZ.find(x=>x.id===SEL);if(p&&!p.caricato){$('main').innerHTML='<div class="vuoto">Apertura di '+esc(p.cognome+' '+p.nome)+'…</div>';caricaPaz(p).then(()=>{if(SEL===p.id)render()}).catch(e=>{PAZ=PAZ.filter(x=>x!==p);stato(p.cognome+' '+p.nome+': file non leggibile, tolto dall\'elenco',true);SEL=null;render()});return}
     if(p){$('main').innerHTML=vistaPaz(p);document.body.classList.toggle('contini',false);window.scrollTo(0,0);return}SEL=null}
   $('main').innerHTML=`<input type="search" id="q" placeholder="Cerca paziente (cognome, nome, data di nascita)" autocomplete="off" autocorrect="off" spellcheck="false" value="${esc(Q)}">`+st+`<div id="ris"></div>`;
   const q=$('q');q.oninput=()=>{Q=q.value;risultati()};risultati();
