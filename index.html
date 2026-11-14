@@ -117,6 +117,8 @@ textarea{resize:vertical}
 .avviso{background:#fff4e6;padding:12px 14px;font-size:14px}
 .avviso .b2{margin-top:8px;display:block}
 .nota{padding:9px 14px;border-top:1px solid var(--line);white-space:pre-wrap;font-size:14px}
+.let{padding:6px 14px 2px;font-size:12px;font-weight:700;color:var(--acc);background:#f6f9f9;border-top:1px solid var(--line)}
+.seg.ord{margin:0 0 2px}.seg.ord button{flex:1}
 .nota small{display:block;color:var(--mut);font-size:12px}
 </style>
 </head>
@@ -328,19 +330,32 @@ function render(){
   $('main').innerHTML=`<input type="search" id="q" placeholder="Cerca paziente (cognome, nome, data di nascita)" autocomplete="off" autocorrect="off" spellcheck="false" value="${esc(Q)}">`+st+`<div id="ris"></div>`;
   const q=$('q');q.oninput=()=>{Q=q.value;risultati()};risultati();
 }
+let ORD='recenti',OSS=null,LISTA_Y=0;const DA_CARICARE=new Set();let ossT=null;
+const infoRiga=p=>!p.caricato?'…':[p.nascita?fmt(p.nascita)+(eta(p.nascita)!==null?' · '+eta(p.nascita)+' anni':''):'',p.ult?'ultima visita '+fmt(p.ult):''].filter(Boolean).join(' · ');
+const rigaPaz=p=>`<button class="row" data-id="${esc(p.id)}"><div class="t"><b>${esc(p.cognome)} ${esc(p.nome)}</b><span>${infoRiga(p)}</span></div><span class="ch">›</span></button>`;
 function risultati(){
   if(!CARICATO){$('ris').innerHTML='';return}
-  const q=norm(Q);let L,tit;
+  const q=norm(Q);let L,tit,lettere=false;
   if(q){const qd=Q.replace(/[^\d]/g,'');
     if(qd.length>=4&&!TUTTI)caricaTuttiPaz();
     L=PAZ.filter(p=>p.k.includes(q)||p.k2.includes(q)||(qd.length>=4&&fmt(p.nascita).replace(/\D/g,'').includes(qd)))
       .sort((a,b)=>(b.k.startsWith(q)-a.k.startsWith(q))||a.k.localeCompare(b.k));tit=L.length+' trovati'}
-  else{/* ordine stabile: data dell'ultimo salvataggio del file (= ultima visita registrata) */
-    L=PAZ.slice().sort((a,b)=>(b.fmod||'').localeCompare(a.fmod||'')||a.k.localeCompare(b.k));tit='Ultimi pazienti visti'}
-  const tot=L.length;L=L.slice(0,40);
-  $('ris').innerHTML=`<div class="card"><h3>${esc(tit)}</h3>${L.map(p=>`<button class="row" data-id="${esc(p.id)}"><div class="t"><b>${esc(p.cognome)} ${esc(p.nome)}</b><span>${!p.caricato?'…':[p.nascita?fmt(p.nascita)+(eta(p.nascita)!==null?' · '+eta(p.nascita)+' anni':''):'',p.ult?'ultima visita '+fmt(p.ult):''].filter(Boolean).join(' · ')}</span></div><span class="ch">›</span></button>`).join('')||'<div class="vuoto">Nessun paziente</div>'}${tot>40?`<div class="vuoto">Altri ${tot-40}: scrivi qualche lettera in più</div>`:''}</div>`;
-  $('ris').querySelectorAll('.row').forEach(b=>b.onclick=()=>{SEL=b.dataset.id;render()});
-  caricaVisibili(L);
+  else if(ORD==='recenti'){/* ordine stabile: data dell'ultimo salvataggio del file (= ultima visita registrata) */
+    L=PAZ.slice().sort((a,b)=>(b.fmod||'').localeCompare(a.fmod||'')||a.k.localeCompare(b.k)).slice(0,40);tit='Ultimi 40 pazienti visti'}
+  else{L=PAZ.slice().sort((a,b)=>a.k.localeCompare(b.k));tit='Tutti i pazienti · '+L.length;lettere=true}
+  let h='',ult='';
+  for(const p of L){if(lettere){const c=(p.k[0]||'#').toUpperCase();if(c!==ult){ult=c;h+=`<div class="let">${esc(c)}</div>`}}h+=rigaPaz(p)}
+  $('ris').innerHTML=`<div class="seg ord"><button data-o="recenti" class="${ORD==='recenti'?'on':''}">Ultimi visti</button><button data-o="az" class="${ORD==='az'?'on':''}">Tutti A–Z</button></div>`.repeat(q?0:1)
+    +`<div class="card"><h3>${esc(tit)}</h3>${h||'<div class="vuoto">Nessun paziente</div>'}</div>`;
+  $('ris').querySelectorAll('[data-o]').forEach(b=>b.onclick=()=>{ORD=b.dataset.o;risultati();window.scrollTo(0,0)});
+  $('ris').querySelectorAll('.row').forEach(b=>b.onclick=()=>{LISTA_Y=window.scrollY;SEL=b.dataset.id;render()});
+  /* scarica i dettagli solo delle righe che compaiono sullo schermo */
+  if(OSS)OSS.disconnect();DA_CARICARE.clear();
+  OSS=new IntersectionObserver(E=>{for(const e of E)if(e.isIntersecting){const p=PAZ.find(x=>x.id===e.target.dataset.id);if(p&&!p.caricato)DA_CARICARE.add(p);OSS.unobserve(e.target)}
+    clearTimeout(ossT);ossT=setTimeout(async()=>{const da=[...DA_CARICARE];DA_CARICARE.clear();if(!da.length)return;
+      await aGruppi(da,async p=>{try{await caricaPaz(p)}catch{}const r=document.querySelector('#ris .row[data-id="'+CSS.escape(p.id)+'"]');if(r)r.querySelector('.t').innerHTML=`<b>${esc(p.cognome)} ${esc(p.nome)}</b><span>${infoRiga(p)}</span>`},6)},150)},{rootMargin:'200px'});
+  const byId=new Set(PAZ.filter(p=>!p.caricato).map(p=>p.id));
+  $('ris').querySelectorAll('.row').forEach(r=>{if(byId.has(r.dataset.id))OSS.observe(r)});
 }
 
 /* --- testo della visita (stessa logica del referto) --- */
@@ -393,7 +408,7 @@ function vistaPaz(p){
   for(const c of ['ref','lenti','cv']){const L=docs.filter(d=>d.cat===c);if(!L.length)continue;
     h+=`<div class="card"><h3>${CAT[c][0]}</h3>${L.map(d=>`<button class="row pdf" data-pdf="${esc(d.id)}" data-n="${esc(d.nome)}"><span class="ic ${CAT[c][2]}">${d.mdl?'MDL':CAT[c][1]}</span><div class="t"><b>${fmt(d.data)} · ${esc(d.tipo)}</b><span>${esc(MED[d.med])}</span></div><span class="ch">›</span></button>`).join('')}</div>`}
   if(!docs.length)h+=`<div class="card"><h3>Documenti</h3><div class="vuoto">Nessun PDF trovato</div></div>`;
-  setTimeout(()=>{$('bk').onclick=()=>{SEL=null;render()};
+  setTimeout(()=>{$('bk').onclick=()=>{const y=LISTA_Y;SEL=null;render();window.scrollTo(0,y)};
     document.querySelectorAll('.vis>button').forEach(b=>b.onclick=()=>b.parentNode.classList.toggle('open'));
     document.querySelectorAll('[data-pdf]').forEach(b=>b.onclick=()=>apriPdf(b.dataset.pdf,b.dataset.n));
     document.querySelectorAll('[data-prat]').forEach(b=>b.onclick=()=>apriPratica(PRAT.find(x=>x.id===b.dataset.prat)));
