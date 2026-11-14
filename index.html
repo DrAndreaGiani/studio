@@ -229,7 +229,7 @@ const pca=new msal.PublicClientApplication({
 let account=null;
 async function token(){
   try{return (await pca.acquireTokenSilent({scopes:SCOPES,account})).accessToken}
-  catch(e){if(e instanceof msal.InteractionRequiredAuthError||/interaction_required|login_required|no_account/i.test(e.errorCode||'')){await pca.acquireTokenRedirect({scopes:SCOPES,account});return new Promise(()=>{})}throw e}
+  catch(e){if(e instanceof msal.InteractionRequiredAuthError||/interaction_required|login_required|no_account/i.test(e.errorCode||'')){await pca.acquireTokenRedirect({scopes:SCOPES,account,loginHint:account&&account.username});return new Promise(()=>{})}throw e}
 }
 const pathUrl=p=>'https://graph.microsoft.com/v1.0/me/drive/root:/'+p.split('/').map(encodeURIComponent).join('/')+':';
 async function graph(url,tipo='json'){
@@ -736,8 +736,13 @@ $('vs').onclick=async()=>{if(!pdfFile)return;try{if(navigator.canShare&&navigato
 $('tp').onclick=async()=>{if(VISTA==='prat')await chiudiPratica('paz');VISTA='paz';render()};
 $('tc').onclick=async()=>{if(VISTA==='prat')await chiudiPratica('chir');VISTA='chir';SEL=null;render()};
 $('brel').onclick=()=>caricaTutto();
-$('bout').onclick=()=>{PAZ=[];PRAT=[];PDF=new Map();pca.logoutRedirect({account})};
+$('bout').onclick=()=>{try{localStorage.removeItem('ultimo_utente')}catch{}PAZ=[];PRAT=[];PDF=new Map();pca.logoutRedirect({account})};
+/* accesso automatico: se su questo telefono è già entrato qualcuno, rimanda subito a Microsoft
+   con l'utente già indicato (con «Rimanere connesso: Sì» Microsoft rientra senza chiedere nulla) */
 function login(msg){
+  let u=null,giaProvato=false;try{u=localStorage.getItem('ultimo_utente');giaProvato=sessionStorage.getItem('auto_login')==='1'}catch{}
+  if(u&&!msg&&!giaProvato){try{sessionStorage.setItem('auto_login','1')}catch{}
+    $('main').innerHTML='<div class="vuoto">Accesso in corso…</div>';pca.loginRedirect({scopes:SCOPES,loginHint:u});return}
   $('main').innerHTML=`<div class="login"><h2>Consultazione studio</h2><div class="m">Cartella clinica, referti e chirurgia in sola lettura.<br>Accedi con l'account Microsoft dello studio.</div>${msg?`<p class="st err">${esc(msg)}</p>`:''}<button class="big" id="blog">Accedi con Microsoft</button></div>`;
   $('blog').onclick=()=>pca.loginRedirect({scopes:SCOPES,prompt:'select_account'});
 }
@@ -747,7 +752,7 @@ let nascosto=0;document.addEventListener('visibilitychange',()=>{if(document.hid
   try{await pca.initialize();const r=await pca.handleRedirectPromise();account=r?.account||pca.getAllAccounts()[0]||null}
   catch(e){login('Accesso non riuscito: '+(e.errorMessage||e.message||e));return}
   if(!account){login();return}
-  pca.setActiveAccount(account);
+  pca.setActiveAccount(account);try{localStorage.setItem('ultimo_utente',account.username);sessionStorage.removeItem('auto_login')}catch{}
   $('tabs').hidden=false;$('brel').hidden=false;$('bout').hidden=false;
   render();caricaTutto();
 })();
