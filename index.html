@@ -266,17 +266,15 @@ async function caricaTutto(){
         const k=norm(n);if(!PDF.has(k))PDF.set(k,[]);
         PDF.get(k).push({id:x.id,nome:x.name,tipo:m[2],data:m[3],med,cat:sp==='CV'?'cv':cat,mdl:sp==='MDL'})}});
     SALA=sala&&sala.giorni?sala:{giorni:{}};
-    const js=fp.filter(x=>/\.json$/i.test(x.name));
-    const pp=await aGruppi(js,x=>contenuto(x.id),8,(a,b)=>stato('Caricamento pazienti '+a+'/'+b+'…'));
-    /* unisce eventuali copie in conflitto di OneDrive (stesso id paziente) */
-    const M=new Map();
-    for(const p of pp){if(!p||!p.id)continue;const o=M.get(p.id);
-      if(!o){M.set(p.id,p);continue}
-      const V=new Map((o.visite||[]).map(v=>[v.id,v]));for(const v of p.visite||[]){const w=V.get(v.id);if(!w||(v.mod||'')>(w.mod||''))V.set(v.id,v)}
-      const nuovo=(p.visite||[]).reduce((a,v)=>v.mod>a?v.mod:a,'')>(o.visite||[]).reduce((a,v)=>v.mod>a?v.mod:a,'');
-      const b=nuovo?p:o;M.set(p.id,{...b,visite:[...V.values()]})}
-    PAZ=[...M.values()].map(p=>{const vs=(p.visite||[]).slice().sort((a,b)=>(b.data||'').localeCompare(a.data||'')||(b.mod||'').localeCompare(a.mod||''));
-      return {...p,visite:vs,k:norm(p.cognome+' '+p.nome),k2:norm(p.nome+' '+p.cognome),ult:vs[0]?.data||''}});
+    /* pazienti: solo l'elenco dei file (nome file = cognome_nome_id.json); il contenuto si scarica quando serve.
+       Ciò che è già in memoria e non è cambiato su OneDrive non viene riscaricato. */
+    const vecchi=new Map(PAZ.map(p=>[p.id,p])),G=new Map();
+    for(const x of fp){if(!/\.json$/i.test(x.name))continue;const st=stubDa(x.name);if(!st)continue;
+      const g=G.get(st.id)||{...st,items:[]};g.items.push({id:x.id,mod:x.lastModifiedDateTime||''});G.set(st.id,g)}
+    PAZ=[...G.values()].map(g=>{g.firma=g.items.map(i=>i.id+'@'+i.mod).sort().join('|');g.fmod=g.items.reduce((a,i)=>i.mod>a?i.mod:a,'');
+      const o=vecchi.get(g.id);if(o&&o.caricato&&o.firma===g.firma)return o;
+      return {...g,k:norm(g.cognome+' '+g.nome),k2:norm(g.nome+' '+g.cognome),visite:[],caricato:false}});
+    TUTTI=PAZ.every(p=>p.caricato);
     stato('Caricamento chirurgia…');
     const prj=pr.filter(x=>/\.json$/i.test(x.name));
     PRAT=(await aGruppi(prj,async x=>{const p=await contenuto(x.id);if(p)p.file=x.name;return p},8)).filter(p=>p&&p.id);
@@ -285,7 +283,34 @@ async function caricaTutto(){
   }catch(e){ERR=e.message||String(e);stato(ERR,true)}
   render();
 }
-let CARICATO_ORA=null;
+let CARICATO_ORA=null,TUTTI=false;
+const cap=w=>w.replace(/(^|\s)\S/g,c=>c.toUpperCase());
+function stubDa(nome){const b=nome.replace(/\.json$/i,'').split('_');if(b.length<3)return null;
+  const id=b[b.length-1].split(/[^a-z0-9]/i)[0];if(!id)return null;
+  return {id,cognome:cap(b[0].replace(/-/g,' ')),nome:cap(b.slice(1,-1).join(' ').replace(/-/g,' '))}}
+/* scarica (una volta sola) il file del paziente; unisce eventuali copie in conflitto di OneDrive */
+function caricaPaz(p){
+  if(!p||p.caricato)return Promise.resolve(p);
+  if(p._prom)return p._prom;
+  p._prom=(async()=>{
+    const pp=(await Promise.all(p.items.map(i=>contenuto(i.id).catch(()=>null)))).filter(x=>x&&x.id);
+    if(!pp.length){p._prom=null;throw new Error('file del paziente non leggibile')}
+    let b=pp[0];const V=new Map();
+    for(const x of pp){for(const v of x.visite||[]){const w=V.get(v.id);if(!w||(v.mod||'')>(w.mod||''))V.set(v.id,v)}
+      const mx=(x.visite||[]).reduce((a,v)=>v.mod>a?v.mod:a,''),mb=(b.visite||[]).reduce((a,v)=>v.mod>a?v.mod:a,'');if(mx>mb)b=x}
+    const vs=[...V.values()].sort((x,y)=>(y.data||'').localeCompare(x.data||'')||(y.mod||'').localeCompare(x.mod||''));
+    Object.assign(p,{cognome:b.cognome,nome:b.nome,titolo:b.titolo,nascita:b.nascita,visite:vs,ult:vs[0]?.data||'',
+      k:norm(b.cognome+' '+b.nome),k2:norm(b.nome+' '+b.cognome),caricato:true});p._prom=null;return p})();
+  return p._prom;
+}
+async function caricaTanti(L,prog){await aGruppi(L.filter(p=>!p.caricato),p=>caricaPaz(p),6,prog)}
+let visT=null;
+function caricaVisibili(L){const da=L.filter(p=>!p.caricato);if(!da.length)return;
+  clearTimeout(visT);visT=setTimeout(async()=>{await caricaTanti(da);if(VISTA==='paz'&&!SEL&&$('ris'))risultati()},250)}
+let tuttiProm=null;
+function caricaTuttiPaz(){if(TUTTI)return Promise.resolve();
+  if(!tuttiProm)tuttiProm=caricaTanti(PAZ,(a,b)=>stato('Ricerca per data: lettura pazienti '+a+'/'+b+'…')).then(()=>{TUTTI=true;tuttiProm=null;stato('');if(VISTA==='paz'&&!SEL&&$('ris'))risultati()});
+  return tuttiProm}
 
 /* ====== RENDER ====== */
 let VISTA='paz',SEL=null,Q='';
@@ -298,7 +323,8 @@ function render(){
   if(VISTA==='prat'&&CUR){$('main').innerHTML=vistaPratica();bindPratica();return}
   if(VISTA==='prat')VISTA='chir';
   if(VISTA==='chir'){$('main').innerHTML=st+vistaChir();bindChir();return}
-  if(SEL){const p=PAZ.find(x=>x.id===SEL);if(p){$('main').innerHTML=vistaPaz(p);document.body.classList.toggle('contini',false);window.scrollTo(0,0);return}SEL=null}
+  if(SEL){const p=PAZ.find(x=>x.id===SEL);if(p&&!p.caricato){$('main').innerHTML='<div class="vuoto">Apertura di '+esc(p.cognome+' '+p.nome)+'…</div>';caricaPaz(p).then(()=>{if(SEL===p.id)render()}).catch(e=>{stato('Paziente non aperto: '+(e.message||e),true);SEL=null;render()});return}
+    if(p){$('main').innerHTML=vistaPaz(p);document.body.classList.toggle('contini',false);window.scrollTo(0,0);return}SEL=null}
   $('main').innerHTML=`<input type="search" id="q" placeholder="Cerca paziente (cognome, nome, data di nascita)" autocomplete="off" autocorrect="off" spellcheck="false" value="${esc(Q)}">`+st+`<div id="ris"></div>`;
   const q=$('q');q.oninput=()=>{Q=q.value;risultati()};risultati();
 }
@@ -306,12 +332,15 @@ function risultati(){
   if(!CARICATO){$('ris').innerHTML='';return}
   const q=norm(Q);let L,tit;
   if(q){const qd=Q.replace(/[^\d]/g,'');
+    if(qd.length>=4&&!TUTTI)caricaTuttiPaz();
     L=PAZ.filter(p=>p.k.includes(q)||p.k2.includes(q)||(qd.length>=4&&fmt(p.nascita).replace(/\D/g,'').includes(qd)))
       .sort((a,b)=>(b.k.startsWith(q)-a.k.startsWith(q))||a.k.localeCompare(b.k));tit=L.length+' trovati'}
-  else{L=PAZ.filter(p=>p.ult).sort((a,b)=>b.ult.localeCompare(a.ult)||a.k.localeCompare(b.k));tit='Ultime visite'}
-  const tot=L.length;L=L.slice(0,60);
-  $('ris').innerHTML=`<div class="card"><h3>${esc(tit)}</h3>${L.map(p=>`<button class="row" data-id="${esc(p.id)}"><div class="t"><b>${esc(p.cognome)} ${esc(p.nome)}</b><span>${p.nascita?fmt(p.nascita)+(eta(p.nascita)!==null?' · '+eta(p.nascita)+' anni':''):''}${p.ult?(p.nascita?' · ':'')+'ultima visita '+fmt(p.ult):''}</span></div><span class="ch">›</span></button>`).join('')||'<div class="vuoto">Nessun paziente</div>'}${tot>60?`<div class="vuoto">Altri ${tot-60}: scrivi qualche lettera in più</div>`:''}</div>`;
+  else{/* ordine stabile: data dell'ultimo salvataggio del file (= ultima visita registrata) */
+    L=PAZ.slice().sort((a,b)=>(b.fmod||'').localeCompare(a.fmod||'')||a.k.localeCompare(b.k));tit='Ultimi pazienti visti'}
+  const tot=L.length;L=L.slice(0,40);
+  $('ris').innerHTML=`<div class="card"><h3>${esc(tit)}</h3>${L.map(p=>`<button class="row" data-id="${esc(p.id)}"><div class="t"><b>${esc(p.cognome)} ${esc(p.nome)}</b><span>${!p.caricato?'…':[p.nascita?fmt(p.nascita)+(eta(p.nascita)!==null?' · '+eta(p.nascita)+' anni':''):'',p.ult?'ultima visita '+fmt(p.ult):''].filter(Boolean).join(' · ')}</span></div><span class="ch">›</span></button>`).join('')||'<div class="vuoto">Nessun paziente</div>'}${tot>40?`<div class="vuoto">Altri ${tot-40}: scrivi qualche lettera in più</div>`:''}</div>`;
   $('ris').querySelectorAll('.row').forEach(b=>b.onclick=()=>{SEL=b.dataset.id;render()});
+  caricaVisibili(L);
 }
 
 /* --- testo della visita (stessa logica del referto) --- */
@@ -613,7 +642,7 @@ async function salvaSala(fn){
 }
 
 /* --- apertura / chiusura scheda --- */
-async function apriPratica(p){if(!MEDU)await chiediMed();if(CUR&&CUR!==p)await salva();CUR=p;CUR._base=p.mod||null;VISTA='prat';render();window.scrollTo(0,0)}
+async function apriPratica(p){if(!MEDU)await chiediMed();try{await caricaPaz(pazDi(p))}catch{}if(CUR&&CUR!==p)await salva();CUR=p;CUR._base=p.mod||null;VISTA='prat';render();window.scrollTo(0,0)}
 async function chiudiPratica(dove){await salva();if(PDF_T)scriviPdf();CUR=null;VISTA=dove||'chir';render();window.scrollTo(0,0)}
 function nuovaPratica(paz){
   const V=paz.visite||[],v=V[0],o={};if(v)CHIR_K.forEach(k=>{if(v.v&&v.v[k])o[k]=v.v[k]});
