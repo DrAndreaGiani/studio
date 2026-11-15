@@ -229,9 +229,26 @@ const pca=new msal.PublicClientApplication({
   auth:{clientId:CLIENT_ID,authority:'https://login.microsoftonline.com/'+TENANT_ID,redirectUri:REDIRECT,postLogoutRedirectUri:REDIRECT,navigateToLoginRequestUrl:false},
   cache:{cacheLocation:'localStorage'}});
 let account=null;
-async function token(){
-  try{return (await pca.acquireTokenSilent({scopes:SCOPES,account})).accessToken}
-  catch(e){if(e instanceof msal.InteractionRequiredAuthError||/interaction_required|login_required|no_account/i.test(e.errorCode||'')){await pca.acquireTokenRedirect({scopes:SCOPES,account,loginHint:account&&account.username});return new Promise(()=>{})}throw e}
+/* Token: solo cache e refresh token, mai l'iframe nascosto (su iPhone va in timeout: «monitor_window_timeout»).
+   Se il refresh token è scaduto (per le app web Microsoft lo fa durare 24 ore) si passa da Microsoft con un redirect,
+   che con «Rimanere connesso: Sì» rientra da solo. Un solo redirect anche se più richieste falliscono insieme. */
+let tokProm=null,redirInCorso=false;
+function token(){
+  if(redirInCorso)return new Promise(()=>{});
+  if(tokProm)return tokProm;
+  tokProm=(async()=>{
+    try{return (await pca.acquireTokenSilent({scopes:SCOPES,account,cacheLookupPolicy:msal.CacheLookupPolicy.AccessTokenAndRefreshToken})).accessToken}
+    catch(e){
+      const cod=(e.errorCode||'')+' '+(e.message||'');
+      if(/no_network|network_error|post_request_failed|endpoints_resolution/i.test(cod))throw new Error('nessuna connessione a Internet');
+      let recente=false;try{recente=Date.now()-(+sessionStorage.getItem('redir_ts')||0)<60e3;sessionStorage.setItem('redir_ts',Date.now())}catch{}
+      if(recente)throw new Error('accesso a Microsoft non riuscito ('+(e.errorCode||e.message)+'). Premi «Esci» e rientra.');
+      redirInCorso=true;
+      await pca.acquireTokenRedirect({scopes:SCOPES,account,loginHint:account&&account.username});
+      return new Promise(()=>{});
+    }finally{setTimeout(()=>{tokProm=null},0)}
+  })();
+  return tokProm;
 }
 const pathUrl=p=>'https://graph.microsoft.com/v1.0/me/drive/root:/'+p.split('/').map(encodeURIComponent).join('/')+':';
 async function graph(url,tipo='json'){
@@ -318,7 +335,7 @@ function caricaTuttiPaz(){if(TUTTI)return Promise.resolve();
 let VISTA='paz',SEL=null,Q='';
 let statoTxt='',statoErr=false;
 function stato(t,err){statoTxt=t;statoErr=!!err;const s=document.querySelector('.st');if(s){s.textContent=t||info();s.className='st'+(err?' err':'')}}
-const VERSIONE='14/11 18:05';
+const VERSIONE='15/11 16:00';
 const info=()=>CARICATO?'App del '+VERSIONE+' · '+PAZ.length+' pazienti · aggiornato alle '+CARICATO_ORA.toLocaleTimeString('it',{hour:'2-digit',minute:'2-digit'}):'';
 function render(){
   $('tp').classList.toggle('on',VISTA==='paz');$('tc').classList.toggle('on',VISTA==='chir'||VISTA==='prat');
